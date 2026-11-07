@@ -70,6 +70,9 @@ public sealed class UpdateManager : IDisposable
     /// <summary>The version of the running app, as used for comparisons.</summary>
     public SemVer CurrentVersion { get; }
 
+    /// <summary>False when the app runs under the dotnet host (e.g. <c>dotnet run</c>), where installing is refused. Skip <see cref="Start"/> then.</summary>
+    public bool CanSelfInstall => _paths.CanSelfInstall;
+
     /// <summary>The newest newer release found so far, or null.</summary>
     public UpdateInfo? Available { get; private set; }
 
@@ -411,6 +414,12 @@ public sealed class UpdateManager : IDisposable
     {
         try { File.Delete(path); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
+    internal void ReportError(Exception ex)
+    {
+        Log($"Update failed: {ex.Message}");
+        Raise(() => Error?.Invoke(this, new UpdateErrorEventArgs(ex)));
     }
 
     private void Log(string message) => _options.Log?.Invoke(message);

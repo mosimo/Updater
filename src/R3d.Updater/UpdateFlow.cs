@@ -15,10 +15,19 @@ public static class UpdateFlow
         var asked = false;
         manager.UpdateReady += async (_, staged) =>
         {
-            if (asked) return;
+            if (asked || !manager.CanSelfInstall) return;
             asked = true;
-            if (await confirm("Update ready", $"Version {staged.Version} has been downloaded (you have {manager.CurrentVersion}).\n\nRestart now to install it? Otherwise it installs the next time the app starts."))
-                manager.ApplyAndRestart();
+            try
+            {
+                if (await confirm("Update ready", $"Version {staged.Version} has been downloaded (you have {manager.CurrentVersion}).\n\nRestart now to install it? Otherwise it installs the next time the app starts."))
+                    manager.ApplyAndRestart();
+            }
+            catch (Exception ex)
+            {
+                // async void: never let a failed install take the app down; the next check retries.
+                asked = false;
+                manager.ReportError(ex);
+            }
         };
     }
 
