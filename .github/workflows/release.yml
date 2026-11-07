@@ -1,0 +1,25 @@
+name: Release
+
+# Push a tag like v1.0.1 to build the NuGet package and attach it to a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet test -c Release
+      - name: Pack
+        run: dotnet pack src/R3d.Updater -c Release -p:Version="${GITHUB_REF_NAME#v}" -o artifacts
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/*.nupkg --title "R3d.Updater ${GITHUB_REF_NAME#v}" --generate-notes

@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/R3d.Updater/R3d.Updater.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/R3d.Updater.Tests/R3d.Updater.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>R3d.Updater</RootNamespace>
+    <AssemblyName>R3d.Updater</AssemblyName>
+    <Version>1.0.0</Version>
+    <PackageId>R3d.Updater</PackageId>
+    <Description>Self-updater for apps released on GitHub (private repos supported). Checks releases in the background, verifies and installs the update, restarts the app.</Description>
+    <Authors>mosimo</Authors>
+    <RepositoryUrl>https://github.com/mosimo/Updater</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <InternalsVisibleTo Include="R3d.Updater.Tests" />
+  </ItemGroup>
+</Project>
