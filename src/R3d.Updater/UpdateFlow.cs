@@ -32,6 +32,9 @@ public static class UpdateFlow
     }
 
     /// <summary>The "Check for updates" button: check, ask, download, install, restart. Reports every outcome through <paramref name="message"/>.</summary>
+    /// <param name="manager">The update manager to check with.</param>
+    /// <param name="confirm">Shows a yes/no prompt (title, message) and returns the answer.</param>
+    /// <param name="message">Shows an OK message (title, message).</param>
     /// <param name="status">Optional short progress text for the button, e.g. "Downloading 42%". Null text means finished.</param>
     public static async Task CheckInteractiveAsync(
         UpdateManager manager,
