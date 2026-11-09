@@ -1,5 +1,15 @@
 namespace R3d.Updater;
 
+public enum UpdateTransport
+{
+    /// <summary>Try git over SSH first; if that fails and a GitHub token is available, use the API.</summary>
+    Auto,
+    /// <summary>Only git over SSH (needs git on PATH and an SSH key with access to the repo).</summary>
+    GitSsh,
+    /// <summary>Only the GitHub REST API (needs a token for private repos).</summary>
+    GitHubApi,
+}
+
 /// <summary>Everything an app configures to get self-updating. Only <see cref="Repository"/> is required.</summary>
 public sealed class UpdaterOptions
 {
@@ -11,6 +21,15 @@ public sealed class UpdaterOptions
 
     /// <summary>The running version. Defaults to the entry assembly's informational version (build metadata stripped).</summary>
     public string? CurrentVersion { get; init; }
+
+    /// <summary>How releases are fetched. Default <see cref="UpdateTransport.Auto"/>: git over the user's SSH key, falling back to the GitHub API.</summary>
+    public UpdateTransport Transport { get; init; } = UpdateTransport.Auto;
+
+    /// <summary>Git URL for the SSH transport. Defaults to <c>git@github.com:{Repository}.git</c>.</summary>
+    public string? GitUrl { get; init; }
+
+    /// <summary>Branch the release workflow publishes packages to for the SSH transport. Default "release-assets".</summary>
+    public string AssetsBranch { get; init; } = "release-assets";
 
     /// <summary>GitHub token with read access to the repo's releases. When null, <see cref="TokenResolver"/> looks in the environment, a token file and the gh CLI.</summary>
     public string? Token { get; init; }

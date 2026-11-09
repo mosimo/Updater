@@ -26,7 +26,7 @@ public sealed class GitHubRelease
 public sealed class UpdateException(string message, Exception? inner = null) : Exception(message, inner);
 
 /// <summary>Thin GitHub Releases REST client. Works with private repos when given a token.</summary>
-internal sealed class GitHubReleaseClient(HttpClient http, string apiBase, string repo, string? token)
+internal sealed class GitHubReleaseClient(HttpClient http, string apiBase, string repo, string? token) : IReleaseSource
 {
     private readonly Uri _base = new(apiBase.EndsWith('/') ? apiBase : apiBase + "/");
 

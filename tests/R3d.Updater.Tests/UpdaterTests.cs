@@ -144,7 +144,7 @@ public class UpdateManagerTests : IDisposable
 
     private static string Rid => AssetSelector.CurrentRid();
 
-    private static byte[] MakeZip(string version)
+    internal static byte[] MakeZip(string version)
     {
         using var ms = new MemoryStream();
         using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, true))
@@ -160,7 +160,7 @@ public class UpdateManagerTests : IDisposable
         return ms.ToArray();
     }
 
-    private sealed class FakeGitHub(string tag, byte[] zip, bool badChecksum = false, bool withChecksum = true) : HttpMessageHandler
+    internal sealed class FakeGitHub(string tag, byte[] zip, bool badChecksum = false, bool withChecksum = true) : HttpMessageHandler
     {
         public string? LastAuth;
         public int Requests;
@@ -191,7 +191,7 @@ public class UpdateManagerTests : IDisposable
     private UpdateManager Manager(FakeGitHub fake, string current = "1.0.0", bool requireChecksum = false) =>
         new(new UpdaterOptions
         {
-            Repository = "me/App",
+            Repository = "me/App", Transport = UpdateTransport.GitHubApi,
             AppName = "App",
             CurrentVersion = current,
             Token = "tkn",
@@ -283,7 +283,7 @@ public class UpdateManagerTests : IDisposable
         var tcs = new TaskCompletionSource<StagedUpdate>();
         using var m = new UpdateManager(new UpdaterOptions
         {
-            Repository = "me/App", AppName = "App", CurrentVersion = "1.0.0", Token = "t",
+            Repository = "me/App", Transport = UpdateTransport.GitHubApi, AppName = "App", CurrentVersion = "1.0.0", Token = "t",
             InstallDirectory = _install, StateDirectory = _state, InitialDelay = TimeSpan.FromMilliseconds(10),
         }, new HttpClient(fake));
         m.UpdateReady += (_, s) => tcs.TrySetResult(s);
@@ -300,10 +300,145 @@ public class UpdateManagerTests : IDisposable
         var fake = new FakeGitHub("v1.1.0", MakeZip("1.1.0"));
         using var m = new UpdateManager(new UpdaterOptions
         {
-            Repository = "me/App", AppName = "App", CurrentVersion = "1.0.0", Token = "t", StateDirectory = _state,
+            Repository = "me/App", Transport = UpdateTransport.GitHubApi, AppName = "App", CurrentVersion = "1.0.0", Token = "t", StateDirectory = _state,
         }, new HttpClient(fake));
         await m.DownloadAsync((await m.CheckAsync())!);
         if (Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? "").Equals("dotnet", StringComparison.OrdinalIgnoreCase))
             Assert.Throws<InvalidOperationException>(() => m.Apply());
+    }
+}
+
+/// <summary>Runs the real git transport against a local repository standing in for GitHub.</summary>
+public class GitTransportTests : IDisposable
+{
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "r3dgit-" + Guid.NewGuid().ToString("N"));
+    private readonly string _install;
+    private readonly string _state;
+    private readonly string _origin;
+
+    public GitTransportTests()
+    {
+        _install = Path.Combine(_root, "install");
+        _state = Path.Combine(_root, "state");
+        _origin = Path.Combine(_root, "origin");
+        Directory.CreateDirectory(_install);
+        File.WriteAllText(Path.Combine(_install, "app.exe"), "v1");
+    }
+
+    public void Dispose() => GitReleaseSource.DeleteDirectory(_root);
+
+    private static bool Git(string cwd, params string[] args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        try
+        {
+            using var p = System.Diagnostics.Process.Start(psi)!;
+            p.StandardOutput.ReadToEnd(); p.StandardError.ReadToEnd();
+            p.WaitForExit();
+            return p.ExitCode == 0;
+        }
+        catch (System.ComponentModel.Win32Exception) { return false; }
+    }
+
+    /// <summary>Builds the repo the release workflow would publish: an orphan branch with manifest.json, the package and its checksums.</summary>
+    private bool PublishBranch(string tag, byte[]? zipOverride = null)
+    {
+        var version = tag.TrimStart('v');
+        var zip = zipOverride ?? ZipFor(version);
+        var zipName = $"App-{version}-{AssetSelector.CurrentRid()}.zip";
+        Directory.CreateDirectory(_origin);
+        File.WriteAllBytes(Path.Combine(_origin, zipName), zip);
+        File.WriteAllText(Path.Combine(_origin, "SHA256SUMS.txt"), $"{Convert.ToHexString(SHA256.HashData(zip)).ToLowerInvariant()}  {zipName}\n");
+        File.WriteAllText(Path.Combine(_origin, "manifest.json"), JsonSerializer.Serialize(new
+        {
+            tag_name = tag, body = "git notes", draft = false, prerelease = false,
+            assets = new object[] { new { name = zipName, size = zip.Length }, new { name = "SHA256SUMS.txt", size = 10 } },
+        }));
+        return Git(_origin, "init", "-q", "-b", "release-assets")
+            && Git(_origin, "config", "uploadpack.allowFilter", "true")
+            && Git(_origin, "config", "uploadpack.allowAnySHA1InWant", "true")
+            && Git(_origin, "add", "-A")
+            && Git(_origin, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "release");
+    }
+
+    private static byte[] ZipFor(string version)
+    {
+        using var ms = new MemoryStream();
+        using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, true))
+        {
+            using var w = new StreamWriter(zip.CreateEntry($"App-{version}/app.exe").Open());
+            w.Write("v" + version);
+        }
+        return ms.ToArray();
+    }
+
+    private UpdateManager Manager(UpdateTransport transport = UpdateTransport.GitSsh, string? gitUrl = null) => new(new UpdaterOptions
+    {
+        Repository = "me/App", AppName = "App", CurrentVersion = "1.0.0", InstallDirectory = _install, StateDirectory = _state,
+        Transport = transport, GitUrl = gitUrl ?? new Uri(_origin).AbsoluteUri,
+        Token = "unused",
+    }, new HttpClient(new FailingHandler()));
+
+    private sealed class FailingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage r, CancellationToken ct) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+    }
+
+    [Fact]
+    public async Task ChecksDownloadsAndInstallsOverGit()
+    {
+        if (!PublishBranch("v1.2.0")) return; // no git on this machine: nothing to test
+        using var m = Manager();
+        var info = await m.CheckAsync();
+        Assert.Equal("1.2.0", info?.Version.ToString());
+        Assert.Equal("git notes", info!.Notes);
+
+        await m.DownloadAsync(info);
+        m.Apply();
+        Assert.Equal("v1.2.0", File.ReadAllText(Path.Combine(_install, "app.exe")));
+    }
+
+    [Fact]
+    public async Task UpToDateOverGit()
+    {
+        if (!PublishBranch("v1.0.0")) return;
+        using var m = Manager();
+        Assert.Null(await m.CheckAsync());
+    }
+
+    [Fact]
+    public async Task CorruptPackageOverGitIsRejected()
+    {
+        if (!PublishBranch("v1.2.0")) return;
+        // Tamper with the package after the checksum was written.
+        var zipName = $"App-1.2.0-{AssetSelector.CurrentRid()}.zip";
+        File.WriteAllText(Path.Combine(_origin, zipName), "garbage");
+        Assert.True(Git(_origin, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "tamper"));
+        using var m = Manager();
+        var info = (await m.CheckAsync())!;
+        await Assert.ThrowsAsync<UpdateException>(() => m.DownloadAsync(info));
+        Assert.Equal("v1", File.ReadAllText(Path.Combine(_install, "app.exe")));
+    }
+
+    [Fact]
+    public async Task GitOnlyReportsUnreachableRepo()
+    {
+        using var m = Manager(gitUrl: new Uri(Path.Combine(_root, "nope")).AbsoluteUri);
+        var ex = await Assert.ThrowsAsync<UpdateException>(() => m.CheckAsync());
+        Assert.Contains("git", ex.Message);
+    }
+
+    [Fact]
+    public async Task AutoFallsBackToApiWhenGitFails()
+    {
+        var fake = new UpdateManagerTests.FakeGitHub("v1.1.0", UpdateManagerTests.MakeZip("1.1.0"));
+        using var m = new UpdateManager(new UpdaterOptions
+        {
+            Repository = "me/App", AppName = "App", CurrentVersion = "1.0.0", InstallDirectory = _install, StateDirectory = _state,
+            Transport = UpdateTransport.Auto, GitUrl = new Uri(Path.Combine(_root, "nope")).AbsoluteUri, Token = "tkn",
+        }, new HttpClient(fake));
+        Assert.Equal("1.1.0", (await m.CheckAsync())?.Version.ToString());
     }
 }

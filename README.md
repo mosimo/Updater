@@ -1,6 +1,6 @@
 # R3d.Updater
 
-A small .NET library that lets any app released on GitHub update itself. It checks the repo's latest release in the background, downloads the package for the current OS/architecture, verifies its SHA256, unpacks it, swaps the files into the app folder (with rollback) and restarts the app. Private repos work with a GitHub token.
+A small .NET library that lets any app released on GitHub update itself. It checks the repo's latest release in the background, downloads the package for the current OS/architecture, verifies its SHA256, unpacks it, swaps the files into the app folder (with rollback) and restarts the app. Private repos work over the user's own SSH key (no token).
 
 It is repo-agnostic: you pass `owner/name`, nothing is hard-coded to a specific app.
 
@@ -60,16 +60,25 @@ updater.Start();                                   // first check after 10 s, th
 
 Other entry points: `CheckAsync()`, `DownloadAsync(info)`, `Apply()` (no restart), `UpdateNowAsync()` (a "Check for updates" button), `SkipVersion(info)`, events `UpdateAvailable`, `DownloadProgress`, `Error`. Set `AutoDownload = false` to only be notified.
 
-## GitHub token (private repos)
+## Getting releases from a private repo: git over SSH (no token)
 
-The token only needs read access to the repo's contents (a fine-grained PAT with **Contents: read** on your app repos is enough). It is looked up in this order:
+GitHub's SSH access only covers git, not release downloads, so the release workflow also publishes each release to an orphan branch, `release-assets`, which holds `manifest.json` (same shape as a GitHub release: `tag_name`, `body`, `prerelease`, `assets[]`) plus the packages and `SHA256SUMS.txt`. It is force-pushed on every release, so the repo only ever carries the latest one. The updater clones that branch with the user's own `git` and SSH key:
 
-1. `UpdaterOptions.Token`
-2. env `UPDATER_GITHUB_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN`
-3. the file `%LOCALAPPDATA%\R3dUpdater\token` (Linux: `~/.local/share/R3dUpdater/token`), just the token on one line
-4. `gh auth token` if the GitHub CLI is installed and logged in
+- A check is a blobless shallow clone, so only `manifest.json` is fetched (a few KB).
+- The package is fetched only when an update is downloaded.
+- Nothing needs configuring beyond what `git clone git@github.com:owner/repo.git` already needs: git on PATH and an SSH key (or agent) with access to the repo. Key passphrases can't be prompted for, so use an agent.
 
-One token file per machine therefore serves every app. Don't embed a token in a released binary.
+Add the step from [docs/release-assets-step.yml](docs/release-assets-step.yml) to the end of the app's release workflow (it expects `dist/`, `notes.md` and `$TAG` as in the apps' existing workflows).
+
+`UpdaterOptions.Transport` picks the source:
+
+| Value | Behaviour |
+| --- | --- |
+| `Auto` (default) | git over SSH; if that fails and a GitHub token can be found, the GitHub API |
+| `GitSsh` | git over SSH only |
+| `GitHubApi` | GitHub REST API only |
+
+For the API fallback the token is taken from `UpdaterOptions.Token`, env `UPDATER_GITHUB_TOKEN` / `GITHUB_TOKEN` / `GH_TOKEN`, `%LOCALAPPDATA%\R3dUpdater\token`, or `gh auth token`. It is never needed when the SSH route works.
 
 ## How the install works
 

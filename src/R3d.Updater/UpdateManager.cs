@@ -16,6 +16,7 @@ public sealed class UpdateInfo
     public long DownloadSize { get; init; }
     internal GitHubAsset Asset { get; init; } = null!;
     internal GitHubAsset? ChecksumAsset { get; init; }
+    internal IReleaseSource Source { get; init; } = null!;
 }
 
 /// <summary>An update that is downloaded, verified and unpacked, waiting to be installed.</summary>
@@ -54,7 +55,8 @@ public sealed class UpdateManager : IDisposable
     private readonly bool _ownsHttp;
     private readonly SynchronizationContext? _sync = SynchronizationContext.Current;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private GitHubReleaseClient? _github;
+    private GitHubReleaseClient? _api;
+    private GitReleaseSource? _git;
     private CancellationTokenSource? _cts;
     private Task? _loop;
 
@@ -197,8 +199,7 @@ public sealed class UpdateManager : IDisposable
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var gh = await GetClientAsync().ConfigureAwait(false);
-            var release = await gh.GetLatestAsync(_options.IncludePrereleases, ct).ConfigureAwait(false);
+            var (source, release) = await FetchLatestAsync(ct).ConfigureAwait(false);
             if (release is null || release.Draft) return null;
             if (!SemVer.TryParse(release.TagName, out var version))
                 throw new UpdateException($"Release tag '{release.TagName}' is not a version number.");
@@ -222,6 +223,7 @@ public sealed class UpdateManager : IDisposable
                 Url = release.HtmlUrl,
                 DownloadSize = asset.Size,
                 Asset = asset,
+                Source = source,
                 ChecksumAsset = AssetSelector.PickChecksumFile(release.Assets),
             };
 
@@ -243,7 +245,7 @@ public sealed class UpdateManager : IDisposable
             if (Staged is { } already && already.Version == update.Version && Directory.Exists(already.PayloadDirectory))
                 return already;
 
-            var gh = await GetClientAsync().ConfigureAwait(false);
+            var gh = update.Source;
             var downloads = Path.Combine(_paths.StateDirectory, "downloads");
             Directory.CreateDirectory(downloads);
             var archive = Path.Combine(downloads, update.Asset.Name);
@@ -328,16 +330,52 @@ public sealed class UpdateManager : IDisposable
 
     // ---- Internals ----------------------------------------------------------------------
 
-    private async Task<GitHubReleaseClient> GetClientAsync()
+    private async Task<GitHubReleaseClient> GetApiAsync()
     {
-        if (_github is not null) return _github;
+        if (_api is not null) return _api;
         // The gh CLI fallback blocks on a process, so keep it off the caller's thread.
         var token = await Task.Run(() => TokenResolver.Resolve(_options.Token)).ConfigureAwait(false);
-        if (token is null) Log("No GitHub token found; private repositories will not be reachable");
-        return _github = new GitHubReleaseClient(_http, _options.ApiBaseUrl, _options.Repository, token);
+        if (token is null) Log("No GitHub token found; private repositories will not be reachable through the API");
+        return _api = new GitHubReleaseClient(_http, _options.ApiBaseUrl, _options.Repository, token);
     }
 
-    private async Task VerifyChecksumAsync(GitHubReleaseClient gh, UpdateInfo update, string file, CancellationToken ct)
+    private GitReleaseSource GetGit() => _git ??= new GitReleaseSource(
+        _options.GitUrl ?? $"git@github.com:{_options.Repository}.git",
+        _options.AssetsBranch,
+        Path.Combine(_paths.StateDirectory, "git"),
+        _options.Log);
+
+    /// <summary>Asks the configured source(s) for the latest release. Auto tries git over SSH first, then the API.</summary>
+    private async Task<(IReleaseSource Source, GitHubRelease? Release)> FetchLatestAsync(CancellationToken ct)
+    {
+        var transport = _options.Transport;
+        UpdateException? gitFailure = null;
+        if (transport != UpdateTransport.GitHubApi)
+        {
+            try
+            {
+                var git = GetGit();
+                return (git, await git.GetLatestAsync(_options.IncludePrereleases, ct).ConfigureAwait(false));
+            }
+            catch (UpdateException ex) when (transport == UpdateTransport.Auto)
+            {
+                Log($"git source unavailable: {ex.Message}");
+                gitFailure = ex;
+            }
+        }
+
+        try
+        {
+            var api = await GetApiAsync().ConfigureAwait(false);
+            return (api, await api.GetLatestAsync(_options.IncludePrereleases, ct).ConfigureAwait(false));
+        }
+        catch (UpdateException ex) when (gitFailure is not null)
+        {
+            throw new UpdateException($"{gitFailure.Message} The GitHub API fallback failed too: {ex.Message}", ex);
+        }
+    }
+
+    private async Task VerifyChecksumAsync(IReleaseSource gh, UpdateInfo update, string file, CancellationToken ct)
     {
         string? expected = null;
         if (update.ChecksumAsset is not null)

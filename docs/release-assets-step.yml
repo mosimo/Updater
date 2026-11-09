@@ -1,0 +1,18 @@
+
+      # Lets the in-app updater (mosimo/Updater) fetch the release over git/ssh with the user's own key instead of a
+      # GitHub token: packages and a manifest.json go to an orphan branch that is force-pushed on every release.
+      - name: Publish release-assets branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rm -rf ra && mkdir ra && cp dist/* ra/
+          ASSETS=$(cd dist && for f in *; do jq -n --arg n "$f" --argjson s "$(stat -c%s "$f")" '{name:$n,size:$s}'; done | jq -s .)
+          jq -n --arg tag "$TAG" --arg body "$(cat notes.md)" --argjson assets "$ASSETS" \
+            '{tag_name:$tag, body:$body, draft:false, prerelease:($tag|contains("-")), assets:$assets}' > ra/manifest.json
+          cd ra
+          git init -q -b release-assets
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Release $TAG"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" release-assets
