@@ -10,8 +10,10 @@ public sealed class UpdateInfo
 {
     public required SemVer Version { get; init; }
     public required string Tag { get; init; }
-    /// <summary>Release notes (Markdown) as written on the GitHub release.</summary>
+    /// <summary>The "What's new" part of the release notes (Markdown), without the install instructions; null if none.</summary>
     public string? Notes { get; init; }
+    /// <summary>Release notes (Markdown) as written on the GitHub release.</summary>
+    public string? FullNotes { get; init; }
     public string? Url { get; init; }
     public long DownloadSize { get; init; }
     internal GitHubAsset Asset { get; init; } = null!;
@@ -219,7 +221,8 @@ public sealed class UpdateManager : IDisposable
             {
                 Version = version,
                 Tag = release.TagName,
-                Notes = release.Body,
+                Notes = ReleaseNotes.WhatsNew(release.Body),
+                FullNotes = release.Body,
                 Url = release.HtmlUrl,
                 DownloadSize = asset.Size,
                 Asset = asset,

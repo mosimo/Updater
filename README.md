@@ -10,6 +10,7 @@ It is repo-agnostic: you pass `owner/name`, nothing is hard-coded to a specific 
 - An archive asset per platform whose name contains the runtime id: `MyApp-1.2.3-win-x64.zip`, `MyApp-1.2.3-linux-x64.tar.gz` (`.zip`, `.tar.gz`, `.tgz`). If your names differ, set `AssetPattern`, e.g. `"MyApp-{version}-{rid}.zip"`.
 - Optional `SHA256SUMS.txt` (`sha256sum` format). If present the download is verified; `RequireChecksum = true` makes it mandatory.
 - The archive may have one top-level folder (`MyApp-1.2.3-win-x64/`); it is flattened into the app folder.
+- Release notes: `UpdateInfo.Notes` holds only the "What's new" section (the text after a `What's new` heading, up to the first `---` rule), so the install instructions below the rule are not shown in the app. A body that is only the install instructions gives no notes. The full body is in `UpdateInfo.FullNotes`.
 
 All of mosimo/TerminalClient, R3dMqtt and ScpClient already release this way.
 
