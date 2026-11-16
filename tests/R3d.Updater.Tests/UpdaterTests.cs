@@ -442,3 +442,38 @@ public class GitTransportTests : IDisposable
         Assert.Equal("1.1.0", (await m.CheckAsync())?.Version.ToString());
     }
 }
+
+public class ReleaseNotesTests
+{
+    private static readonly string Install = """
+        Self-contained builds: no .NET install needed.
+
+        * **Windows (x64)**: unzip `TerminalClient-0.9.1-win-x64.zip` and run `TerminalClient.exe`.
+        * **Linux (x64)**: `tar -xzf TerminalClient-0.9.1-linux-x64.tar.gz`, then run `./TerminalClient` in the extracted folder.
+
+        The builds are not code-signed, so Windows SmartScreen may warn on first run.
+        """.ReplaceLineEndings("\n");
+
+    private static readonly string News = """
+        * A long command that wraps over several rows now copies and pastes as one line.
+        * After the window grows, the terminal keeps following new output instead of staying scrolled up.
+        """.ReplaceLineEndings("\n");
+
+    [Fact]
+    public void HouseTemplateKeepsOnlyWhatsNew() =>
+        Assert.Equal(News, ReleaseNotes.WhatsNew($"## What's new\n\n{News}\n\n---\n\n{Install}\n"));
+
+    [Fact]
+    public void PlainHeadingAndStarRuleWithCrLf() =>
+        Assert.Equal(News, ReleaseNotes.WhatsNew($"What's new\r\n\r\n{News.Replace("\n", "\r\n")}\r\n\r\n***\r\n\r\n{Install}"));
+
+    [Fact]
+    public void EndsAtNextHeading() =>
+        Assert.Equal(News, ReleaseNotes.WhatsNew($"# 1.2.0\n\n## What’s new\n{News}\n## Install\n{Install}"));
+
+    [Fact] public void InstallTextOnlyGivesNull() => Assert.Null(ReleaseNotes.WhatsNew(Install));
+    [Fact] public void EmptySectionGivesNull() => Assert.Null(ReleaseNotes.WhatsNew($"## What's new\n\n---\n{Install}"));
+    [Fact] public void NoHeadingKeepsTextBeforeRule() => Assert.Equal(News, ReleaseNotes.WhatsNew($"{News}\n---\n{Install}"));
+    [Fact] public void HandWrittenNotesKept() => Assert.Equal("Fixes a crash.", ReleaseNotes.WhatsNew("Fixes a crash.\n"));
+    [Fact] public void NullBody() => Assert.Null(ReleaseNotes.WhatsNew(null));
+}
