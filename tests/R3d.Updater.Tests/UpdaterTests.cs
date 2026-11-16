@@ -445,19 +445,19 @@ public class GitTransportTests : IDisposable
 
 public class ReleaseNotesTests
 {
-    private const string Install = """
+    private static readonly string Install = """
         Self-contained builds: no .NET install needed.
 
         * **Windows (x64)**: unzip `TerminalClient-0.9.1-win-x64.zip` and run `TerminalClient.exe`.
         * **Linux (x64)**: `tar -xzf TerminalClient-0.9.1-linux-x64.tar.gz`, then run `./TerminalClient` in the extracted folder.
 
         The builds are not code-signed, so Windows SmartScreen may warn on first run.
-        """;
+        """.ReplaceLineEndings("\n");
 
-    private const string News = """
+    private static readonly string News = """
         * A long command that wraps over several rows now copies and pastes as one line.
         * After the window grows, the terminal keeps following new output instead of staying scrolled up.
-        """;
+        """.ReplaceLineEndings("\n");
 
     [Fact]
     public void HouseTemplateKeepsOnlyWhatsNew() =>
