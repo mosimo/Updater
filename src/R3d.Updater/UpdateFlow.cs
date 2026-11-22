@@ -19,7 +19,7 @@ public static class UpdateFlow
             asked = true;
             try
             {
-                if (await confirm("Update ready", $"Version {staged.Version} has been downloaded (you have {manager.CurrentVersion}).\n\nRestart now to install it? Otherwise it installs the next time the app starts."))
+                if (await confirm("Update ready", $"Version {staged.Version} has been downloaded (Current version {manager.CurrentVersion}).\n\nRestart now to install it? Otherwise it installs the next time the app starts."))
                     manager.ApplyAndRestart();
             }
             catch (Exception ex)
