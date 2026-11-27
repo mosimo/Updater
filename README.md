@@ -16,12 +16,32 @@ All of mosimo/TerminalClient, R3dMqtt and ScpClient already release this way.
 
 ## Use it
 
-Reference the project (add this repo as a submodule) or the `R3d.Updater` package from a release:
+Reference the `R3d.Updater` package. Every release tag publishes it to the NuGet feed on git.r3dcloud.net (no login needed to read). Add a `nuget.config` next to the `.slnx`; the source mapping makes `R3d.*` come only from that feed, so a package with the same name on nuget.org is never used:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+    <add key="r3dcloud" value="https://git.r3dcloud.net/api/packages/mosimo/nuget/index.json" />
+  </packageSources>
+  <packageSourceMapping>
+    <packageSource key="nuget.org">
+      <package pattern="*" />
+    </packageSource>
+    <packageSource key="r3dcloud">
+      <package pattern="R3d.*" />
+    </packageSource>
+  </packageSourceMapping>
+</configuration>
+```
 
 ```bash
-git submodule add https://github.com/mosimo/Updater external/Updater
-dotnet add src/MyApp reference external/Updater/src/R3d.Updater
+dotnet add src/MyApp package R3d.Updater --version 1.1.1
 ```
+
+To work on the updater and an app together, clone this repo next to the app and swap the `PackageReference` for a `ProjectReference` to `src/R3d.Updater/R3d.Updater.csproj` locally (don't commit that).
 
 ```csharp
 using R3d.Updater;

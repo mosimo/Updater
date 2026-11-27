@@ -3,11 +3,11 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>R3d.Updater</RootNamespace>
     <AssemblyName>R3d.Updater</AssemblyName>
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
     <PackageId>R3d.Updater</PackageId>
     <Description>Self-updater for apps released on GitHub or Forgejo (private repos supported). Checks releases in the background, verifies and installs the update, restarts the app.</Description>
     <Authors>mosimo</Authors>
-    <RepositoryUrl>https://github.com/mosimo/Updater</RepositoryUrl>
+    <RepositoryUrl>https://git.r3dcloud.net/mosimo/Updater</RepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>

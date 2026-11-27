@@ -3,7 +3,8 @@ name: Release
 # Forgejo Actions copy of .github/workflows/release.yml (Forgejo reads only .forgejo/workflows/ when it exists;
 # GitHub never reads it). Keep the two in step until the repo has moved to git.r3dcloud.net.
 
-# Push a tag like v1.0.1 to build the NuGet package and attach it to a Forgejo release.
+# Push a tag like v1.0.1 to build the NuGet package, attach it to a Forgejo release and publish it to the
+# owner's NuGet feed on this server, where the apps get it from (PackageReference R3d.Updater).
 on:
   push:
     tags: ["v*"]
@@ -48,4 +49,14 @@ jobs:
             | curl -fsS -X POST -H "$AUTH" -H "Content-Type: application/json" -d @- "$API/releases" | jq -r .id)
           for f in artifacts/*.nupkg; do
             curl -fsS -X POST -H "$AUTH" -F "attachment=@$f" "$API/releases/$ID/assets?name=$(basename "$f")" >/dev/null
+          done
+      # The apps restore R3d.Updater from this feed (nuget.config: https://git.r3dcloud.net/api/packages/mosimo/nuget/index.json).
+      # curl, not `dotnet nuget push`: the runner reaches the server over plain http on the LAN, which NuGet refuses.
+      - name: Publish to the NuGet feed
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+        run: |
+          for f in artifacts/*.nupkg; do
+            curl -fsS -X PUT -H "Authorization: token ${FORGEJO_TOKEN}" --upload-file "$f" \
+              "${GITHUB_SERVER_URL}/api/packages/${GITHUB_REPOSITORY_OWNER}/nuget/"
           done
