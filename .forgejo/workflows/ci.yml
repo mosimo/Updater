@@ -1,0 +1,24 @@
+name: CI
+
+# Forgejo Actions copy of .github/workflows/ci.yml (Forgejo reads only .forgejo/workflows/ when it exists;
+# GitHub never reads it). Keep the two in step until the repo has moved to git.r3dcloud.net.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: https://github.com/actions/setup-dotnet@v4
+        if: runner.os != 'Windows'
+        with:
+          dotnet-version: "10.0.x"
+      # The Windows runner has the .NET SDK installed already (setup-dotnet would need admin rights there).
+      - run: dotnet test -c Release
