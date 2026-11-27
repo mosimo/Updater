@@ -52,11 +52,12 @@ jobs:
           done
       # The apps restore R3d.Updater from this feed (nuget.config: https://git.r3dcloud.net/api/packages/mosimo/nuget/index.json).
       # curl, not `dotnet nuget push`: the runner reaches the server over plain http on the LAN, which NuGet refuses.
+      # The publish URL has no trailing slash (".../nuget/" answers 404).
       - name: Publish to the NuGet feed
         env:
           FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
         run: |
           for f in artifacts/*.nupkg; do
             curl -fsS -X PUT -H "Authorization: token ${FORGEJO_TOKEN}" --upload-file "$f" \
-              "${GITHUB_SERVER_URL}/api/packages/${GITHUB_REPOSITORY_OWNER}/nuget/"
+              "${GITHUB_SERVER_URL}/api/packages/${GITHUB_REPOSITORY_OWNER}/nuget"
           done
