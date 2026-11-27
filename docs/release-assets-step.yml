@@ -1,6 +1,8 @@
 
-      # Lets the in-app updater (mosimo/Updater) fetch the release over git/ssh with the user's own key instead of a
-      # GitHub token: packages and a manifest.json go to an orphan branch that is force-pushed on every release.
+      # Lets the in-app updater (mosimo/Updater) fetch the release over git/ssh with the user's own key instead of an
+      # API token: packages and a manifest.json go to an orphan branch that is force-pushed on every release.
+      # It pushes to the server the workflow runs on (GitHub or Forgejo: both set GITHUB_SERVER_URL). On Forgejo use
+      # GH_TOKEN: ${{ secrets.FORGEJO_TOKEN }}; a push mirror then carries the branch on to GitHub for apps that only know GitHub.
       - name: Publish release-assets branch
         env:
           GH_TOKEN: ${{ github.token }}
@@ -15,4 +17,4 @@
           git config user.email "github-actions@users.noreply.github.com"
           git add -A
           git commit -q -m "Release $TAG"
-          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" release-assets
+          git push -f "https://x-access-token:${GH_TOKEN}@${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}.git" release-assets

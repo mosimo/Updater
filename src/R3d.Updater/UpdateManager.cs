@@ -5,14 +5,14 @@ using System.Text.Json;
 
 namespace R3d.Updater;
 
-/// <summary>A newer release that was found on GitHub.</summary>
+/// <summary>A newer release that was found on a release host (Forgejo or GitHub).</summary>
 public sealed class UpdateInfo
 {
     public required SemVer Version { get; init; }
     public required string Tag { get; init; }
     /// <summary>The "What's new" part of the release notes (Markdown), without the install instructions; null if none.</summary>
     public string? Notes { get; init; }
-    /// <summary>Release notes (Markdown) as written on the GitHub release.</summary>
+    /// <summary>Release notes (Markdown) as written on the release.</summary>
     public string? FullNotes { get; init; }
     public string? Url { get; init; }
     public long DownloadSize { get; init; }
@@ -43,7 +43,7 @@ public sealed class UpdateErrorEventArgs(Exception error) : EventArgs
 }
 
 /// <summary>
-/// Self-updater for an app released on GitHub. Create one, call <see cref="Start"/>, handle <see cref="UpdateReady"/>.
+/// Self-updater for an app released on GitHub or Forgejo. Create one, call <see cref="Start"/>, handle <see cref="UpdateReady"/>.
 /// Events are raised on the <see cref="SynchronizationContext"/> that was current when the manager was created
 /// (the UI thread in Avalonia/WPF/WinForms apps if you create it there), otherwise on a background thread.
 /// </summary>
@@ -57,8 +57,7 @@ public sealed class UpdateManager : IDisposable
     private readonly bool _ownsHttp;
     private readonly SynchronizationContext? _sync = SynchronizationContext.Current;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private GitHubReleaseClient? _api;
-    private GitReleaseSource? _git;
+    private readonly Dictionary<string, IReleaseSource> _sources = [];
     private CancellationTokenSource? _cts;
     private Task? _loop;
 
@@ -83,7 +82,7 @@ public sealed class UpdateManager : IDisposable
     /// <summary>The downloaded update waiting to be installed, or null.</summary>
     public StagedUpdate? Staged { get; private set; }
 
-    /// <summary>A newer version exists on GitHub (raised once per version).</summary>
+    /// <summary>A newer version was released (raised once per version).</summary>
     public event EventHandler<UpdateInfo>? UpdateAvailable;
     /// <summary>Download progress for the current update.</summary>
     public event EventHandler<DownloadProgressEventArgs>? DownloadProgress;
@@ -195,14 +194,14 @@ public sealed class UpdateManager : IDisposable
 
     // ---- Check / download / apply -------------------------------------------------------
 
-    /// <summary>Asks GitHub for the latest release. Returns it when it is newer than the running version, otherwise null.</summary>
+    /// <summary>Asks the release hosts for the latest release. Returns it when it is newer than the running version, otherwise null.</summary>
     public async Task<UpdateInfo?> CheckAsync(CancellationToken ct = default)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             var (source, release) = await FetchLatestAsync(ct).ConfigureAwait(false);
-            if (release is null || release.Draft) return null;
+            if (source is null || release is null || release.Draft) return null;
             if (!SemVer.TryParse(release.TagName, out var version))
                 throw new UpdateException($"Release tag '{release.TagName}' is not a version number.");
             if (!_options.IncludePrereleases && version.IsPrerelease) return null;
@@ -333,49 +332,82 @@ public sealed class UpdateManager : IDisposable
 
     // ---- Internals ----------------------------------------------------------------------
 
-    private async Task<GitHubReleaseClient> GetApiAsync()
+    /// <summary>The hosts to try, in order: a <c>hosts.json</c> override if there is one, otherwise <see cref="UpdaterOptions.Hosts"/>.</summary>
+    internal IReadOnlyList<ResolvedHost> ResolveHosts()
     {
-        if (_api is not null) return _api;
-        // The gh CLI fallback blocks on a process, so keep it off the caller's thread.
-        var token = await Task.Run(() => TokenResolver.Resolve(_options.Token)).ConfigureAwait(false);
-        if (token is null) Log("No GitHub token found; private repositories will not be reachable through the API");
-        return _api = new GitHubReleaseClient(_http, _options.ApiBaseUrl, _options.Repository, token);
+        var hosts = ReleaseHost.LoadOverride(Path.Combine(_paths.StateDirectory, ReleaseHost.OverrideFileName));
+        // The shared file applies to every app, so it is skipped when the app (or a test) picked its own state folder.
+        if (hosts is null && _options.StateDirectory is null)
+            hosts = ReleaseHost.LoadOverride(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "R3dUpdater", ReleaseHost.OverrideFileName));
+        if (hosts is not null) Log($"Release hosts from {ReleaseHost.OverrideFileName}");
+        var list = hosts ?? _options.Hosts;
+        if (list.Count == 0) throw new UpdateException("No release hosts are configured.");
+        return list.Select(h => ResolvedHost.From(h, _options)).ToList();
     }
 
-    private GitReleaseSource GetGit() => _git ??= new GitReleaseSource(
-        _options.GitUrl ?? $"git@github.com:{_options.Repository}.git",
-        _options.AssetsBranch,
-        Path.Combine(_paths.StateDirectory, "git"),
-        _options.Log);
+    private async Task<IReleaseSource> ApiForAsync(ResolvedHost host)
+    {
+        var key = $"api|{host.ApiBaseUrl}|{host.Repository}";
+        if (_sources.TryGetValue(key, out var cached)) return cached;
+        // The gh CLI fallback blocks on a process, so keep it off the caller's thread.
+        var token = host.Kind == ReleaseHostKind.GitHub
+            ? await Task.Run(() => TokenResolver.Resolve(host.Token)).ConfigureAwait(false)
+            : TokenResolver.ResolveForgejo(host.Token);
+        if (token is null) Log($"No {host.Kind} token found; private repositories on {host.Name} will not be reachable through the API");
+        return _sources[key] = new ReleaseApiClient(_http, host, token);
+    }
 
-    /// <summary>Asks the configured source(s) for the latest release. Auto tries git over SSH first, then the API.</summary>
-    private async Task<(IReleaseSource Source, GitHubRelease? Release)> FetchLatestAsync(CancellationToken ct)
+    private IReleaseSource GitFor(ResolvedHost host)
+    {
+        var key = $"git|{host.GitUrl}";
+        if (_sources.TryGetValue(key, out var cached)) return cached;
+        // GitHub keeps the folder name older versions used; other hosts get their own.
+        var dir = host.Kind == ReleaseHostKind.GitHub ? "git" : "git-" + string.Concat(host.Name.Select(c => char.IsLetterOrDigit(c) ? c : '_'));
+        return _sources[key] = new GitReleaseSource(host.GitUrl, _options.AssetsBranch, Path.Combine(_paths.StateDirectory, dir), _options.Log);
+    }
+
+    /// <summary>
+    /// Asks each host in turn for the latest release and stops at the first that has one. Per host, Auto tries git over SSH
+    /// first, then the API. Fails only when no host could be asked at all.
+    /// </summary>
+    private async Task<(IReleaseSource? Source, GitHubRelease? Release)> FetchLatestAsync(CancellationToken ct)
     {
         var transport = _options.Transport;
-        UpdateException? gitFailure = null;
-        if (transport != UpdateTransport.GitHubApi)
+        var failures = new List<UpdateException>();
+        var answered = false;
+        foreach (var host in ResolveHosts())
         {
-            try
+            var routes = new List<(string Name, Func<Task<IReleaseSource>> Get)>();
+            if (transport != UpdateTransport.GitHubApi) routes.Add(("git", () => Task.FromResult(GitFor(host))));
+            if (transport != UpdateTransport.GitSsh) routes.Add(("API", () => ApiForAsync(host)));
+
+            foreach (var (route, get) in routes)
             {
-                var git = GetGit();
-                return (git, await git.GetLatestAsync(_options.IncludePrereleases, ct).ConfigureAwait(false));
-            }
-            catch (UpdateException ex) when (transport == UpdateTransport.Auto)
-            {
-                Log($"git source unavailable: {ex.Message}");
-                gitFailure = ex;
+                try
+                {
+                    var source = await get().ConfigureAwait(false);
+                    var release = await source.GetLatestAsync(_options.IncludePrereleases, ct).ConfigureAwait(false);
+                    answered = true;
+                    if (release is not null)
+                    {
+                        Log($"Latest release on {host.Name} ({route}): {release.TagName}");
+                        return (source, release);
+                    }
+                    Log($"No release on {host.Name} ({route})");
+                    break; // the host answered: its other route would say the same
+                }
+                catch (UpdateException ex)
+                {
+                    Log($"{host.Name} ({route}) unavailable: {ex.Message}");
+                    failures.Add(new UpdateException($"{host.Name} ({route}): {ex.Message}", ex));
+                }
             }
         }
 
-        try
-        {
-            var api = await GetApiAsync().ConfigureAwait(false);
-            return (api, await api.GetLatestAsync(_options.IncludePrereleases, ct).ConfigureAwait(false));
-        }
-        catch (UpdateException ex) when (gitFailure is not null)
-        {
-            throw new UpdateException($"{gitFailure.Message} The GitHub API fallback failed too: {ex.Message}", ex);
-        }
+        if (answered || failures.Count == 0) return (null, null);
+        if (failures.Count == 1) throw (UpdateException)failures[0].InnerException!;
+        throw new UpdateException(string.Join(" ", failures.Select(f => f.Message.TrimEnd('.') + ".")), failures[^1].InnerException);
     }
 
     private async Task VerifyChecksumAsync(IReleaseSource gh, UpdateInfo update, string file, CancellationToken ct)

@@ -2,19 +2,26 @@ namespace R3d.Updater;
 
 public enum UpdateTransport
 {
-    /// <summary>Try git over SSH first; if that fails and a GitHub token is available, use the API.</summary>
+    /// <summary>For each host: try git over SSH first; if that fails, the host's REST API.</summary>
     Auto,
     /// <summary>Only git over SSH (needs git on PATH and an SSH key with access to the repo).</summary>
     GitSsh,
-    /// <summary>Only the GitHub REST API (needs a token for private repos).</summary>
+    /// <summary>Only the hosts' REST APIs (GitHub or Forgejo; needs a token for private repos). The name is kept for compatibility.</summary>
     GitHubApi,
 }
 
 /// <summary>Everything an app configures to get self-updating. Only <see cref="Repository"/> is required.</summary>
 public sealed class UpdaterOptions
 {
-    /// <summary>GitHub repository as "owner/name", e.g. "mosimo/R3dMqtt".</summary>
+    /// <summary>Repository as "owner/name", e.g. "mosimo/R3dMqtt". Used on every host unless a <see cref="ReleaseHost"/> sets its own.</summary>
     public required string Repository { get; init; }
+
+    /// <summary>
+    /// Where releases are looked for, in order; the first host that has a release wins. Default: GitHub only.
+    /// Moving to a self-hosted Forgejo with GitHub as a mirror: <c>[ReleaseHost.Forgejo("https://git.r3dcloud.net", sshPort: 8722), ReleaseHost.GitHub()]</c>.
+    /// A <c>hosts.json</c> in the app's state folder (or in the shared R3dUpdater folder) replaces this list without a rebuild.
+    /// </summary>
+    public IReadOnlyList<ReleaseHost> Hosts { get; init; } = [ReleaseHost.GitHub()];
 
     /// <summary>Short name used for the per-app state folder. Defaults to the entry assembly name.</summary>
     public string? AppName { get; init; }
@@ -22,10 +29,10 @@ public sealed class UpdaterOptions
     /// <summary>The running version. Defaults to the entry assembly's informational version (build metadata stripped).</summary>
     public string? CurrentVersion { get; init; }
 
-    /// <summary>How releases are fetched. Default <see cref="UpdateTransport.Auto"/>: git over the user's SSH key, falling back to the GitHub API.</summary>
+    /// <summary>How releases are fetched from each host. Default <see cref="UpdateTransport.Auto"/>: git over the user's SSH key, falling back to the host's API.</summary>
     public UpdateTransport Transport { get; init; } = UpdateTransport.Auto;
 
-    /// <summary>Git URL for the SSH transport. Defaults to <c>git@github.com:{Repository}.git</c>.</summary>
+    /// <summary>Git URL for the SSH transport on GitHub. Defaults to <c>git@github.com:{Repository}.git</c>.</summary>
     public string? GitUrl { get; init; }
 
     /// <summary>Branch the release workflow publishes packages to for the SSH transport. Default "release-assets".</summary>

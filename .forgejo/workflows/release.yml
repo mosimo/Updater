@@ -1,0 +1,51 @@
+name: Release
+
+# Forgejo Actions copy of .github/workflows/release.yml (Forgejo reads only .forgejo/workflows/ when it exists;
+# GitHub never reads it). Keep the two in step until the repo has moved to git.r3dcloud.net.
+
+# Push a tag like v1.0.1 to build the NuGet package and attach it to a Forgejo release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The Forgejo ubuntu-latest image is smaller than GitHub's: add what the steps below need.
+      - name: Install tools
+        run: |
+          MISSING=""
+          for t in curl jq git; do command -v "$t" >/dev/null || MISSING="$MISSING $t"; done
+          if [ -n "$MISSING" ]; then
+            SUDO=$(command -v sudo || true)
+            $SUDO apt-get update -qq && $SUDO apt-get install -y -qq $MISSING
+          fi
+      - uses: actions/checkout@v4
+      - uses: https://github.com/actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet test -c Release
+      - name: Pack
+        run: dotnet pack src/R3d.Updater -c Release -p:Version="${GITHUB_REF_NAME#v}" -o artifacts
+      # Forgejo has no gh CLI: create the release through its API (notes: the annotated tag's message after its title line).
+      - name: Create release
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+        run: |
+          API="${GITHUB_SERVER_URL}/api/v1/repos/${GITHUB_REPOSITORY}"
+          AUTH="Authorization: token ${FORGEJO_TOKEN}"
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          ID=$(jq -n --arg tag "$GITHUB_REF_NAME" --arg name "R3d.Updater ${GITHUB_REF_NAME#v}" \
+                --arg body "$(git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME")" \
+              '{tag_name:$tag, name:$name, body:$body, draft:false, prerelease:($tag|contains("-"))}' \
+            | curl -fsS -X POST -H "$AUTH" -H "Content-Type: application/json" -d @- "$API/releases" | jq -r .id)
+          for f in artifacts/*.nupkg; do
+            curl -fsS -X POST -H "$AUTH" -F "attachment=@$f" "$API/releases/$ID/assets?name=$(basename "$f")" >/dev/null
+          done

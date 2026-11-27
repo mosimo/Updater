@@ -205,20 +205,21 @@ public class UpdateManagerTests : IDisposable
     {
         var fake = new FakeGitHub("v1.1.0", MakeZip("1.1.0"));
         using var m = Manager(fake);
-        UpdateInfo? seen = null;
-        StagedUpdate? ready = null;
-        m.UpdateAvailable += (_, u) => seen = u;
-        m.UpdateReady += (_, s) => ready = s;
+        // Events are posted to the test's synchronization context, so they may arrive after the awaited call returns.
+        var seen = new TaskCompletionSource<UpdateInfo>();
+        var ready = new TaskCompletionSource<StagedUpdate>();
+        m.UpdateAvailable += (_, u) => seen.TrySetResult(u);
+        m.UpdateReady += (_, s) => ready.TrySetResult(s);
 
         var info = await m.CheckAsync();
         Assert.NotNull(info);
         Assert.Equal("1.1.0", info!.Version.ToString());
         Assert.Equal("notes", info.Notes);
         Assert.Equal("Bearer tkn", fake.LastAuth);
-        Assert.Same(info, seen);
+        Assert.Same(info, await seen.Task.WaitAsync(TimeSpan.FromSeconds(10)));
 
         var staged = await m.DownloadAsync(info);
-        Assert.Same(staged, ready);
+        Assert.Same(staged, await ready.Task.WaitAsync(TimeSpan.FromSeconds(10)));
 
         m.Apply();
         Assert.Equal("v1.1.0", File.ReadAllText(Path.Combine(_install, "app.exe")));
@@ -269,11 +270,11 @@ public class UpdateManagerTests : IDisposable
 
         // A later run: OnStartup picks up the staged update. (It would then relaunch the app, so only test the loader via Start.)
         using var next = Manager(fake);
-        StagedUpdate? ready = null;
-        next.UpdateReady += (_, s) => ready = s;
+        var ready = new TaskCompletionSource<StagedUpdate>();
+        next.UpdateReady += (_, s) => ready.TrySetResult(s);
         next.Start();
         await next.StopAsync();
-        Assert.Equal("1.1.0", ready?.Version.ToString());
+        Assert.Equal("1.1.0", (await ready.Task.WaitAsync(TimeSpan.FromSeconds(10))).Version.ToString());
     }
 
     [Fact]
@@ -428,6 +429,27 @@ public class GitTransportTests : IDisposable
         using var m = Manager(gitUrl: new Uri(Path.Combine(_root, "nope")).AbsoluteUri);
         var ex = await Assert.ThrowsAsync<UpdateException>(() => m.CheckAsync());
         Assert.Contains("git", ex.Message);
+    }
+
+    [Fact]
+    public async Task SecondHostOverGitWhenFirstIsUnreachable()
+    {
+        if (!PublishBranch("v1.2.0")) return;
+        using var m = new UpdateManager(new UpdaterOptions
+        {
+            Repository = "me/App", AppName = "App", CurrentVersion = "1.0.0", InstallDirectory = _install, StateDirectory = _state,
+            Transport = UpdateTransport.GitSsh,
+            Hosts =
+            [
+                new ReleaseHost { Kind = ReleaseHostKind.Forgejo, Url = "https://forge.test", GitUrl = new Uri(Path.Combine(_root, "nope")).AbsoluteUri },
+                new ReleaseHost { Kind = ReleaseHostKind.GitHub, GitUrl = new Uri(_origin).AbsoluteUri },
+            ],
+        }, new HttpClient(new FailingHandler()));
+        var info = await m.CheckAsync();
+        Assert.Equal("1.2.0", info?.Version.ToString());
+        await m.DownloadAsync(info!);
+        m.Apply();
+        Assert.Equal("v1.2.0", File.ReadAllText(Path.Combine(_install, "app.exe")));
     }
 
     [Fact]
