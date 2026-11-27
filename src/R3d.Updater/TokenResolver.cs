@@ -3,20 +3,33 @@ using System.Diagnostics;
 namespace R3d.Updater;
 
 /// <summary>
-/// Finds a GitHub token for private repos. Order: explicit option, env vars
+/// Finds an API token for private repos. GitHub: explicit option, env vars
 /// (<c>UPDATER_GITHUB_TOKEN</c>, <c>GITHUB_TOKEN</c>, <c>GH_TOKEN</c>), the file
 /// <c>&lt;local app data&gt;/R3dUpdater/token</c>, then <c>gh auth token</c> if the GitHub CLI is installed.
+/// Forgejo: explicit option, env vars (<c>UPDATER_FORGEJO_TOKEN</c>, <c>FORGEJO_TOKEN</c>), then the file
+/// <c>&lt;local app data&gt;/R3dUpdater/forgejo-token</c>.
 /// </summary>
 public static class TokenResolver
 {
     public static string TokenFilePath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "R3dUpdater", "token");
 
-    public static string? Resolve(string? explicitToken)
+    public static string ForgejoTokenFilePath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "R3dUpdater", "forgejo-token");
+
+    /// <summary>A GitHub token, or null.</summary>
+    public static string? Resolve(string? explicitToken) =>
+        Resolve(explicitToken, ["UPDATER_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"], TokenFilePath) ?? FromGhCli();
+
+    /// <summary>A Forgejo token, or null.</summary>
+    public static string? ResolveForgejo(string? explicitToken) =>
+        Resolve(explicitToken, ["UPDATER_FORGEJO_TOKEN", "FORGEJO_TOKEN"], ForgejoTokenFilePath);
+
+    private static string? Resolve(string? explicitToken, string[] variables, string file)
     {
         if (!string.IsNullOrWhiteSpace(explicitToken)) return explicitToken.Trim();
 
-        foreach (var name in new[] { "UPDATER_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN" })
+        foreach (var name in variables)
         {
             var v = Environment.GetEnvironmentVariable(name);
             if (!string.IsNullOrWhiteSpace(v)) return v.Trim();
@@ -24,16 +37,16 @@ public static class TokenResolver
 
         try
         {
-            if (File.Exists(TokenFilePath))
+            if (File.Exists(file))
             {
-                var v = File.ReadAllText(TokenFilePath).Trim();
+                var v = File.ReadAllText(file).Trim();
                 if (v.Length > 0) return v;
             }
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
 
-        return FromGhCli();
+        return null;
     }
 
     private static string? FromGhCli()

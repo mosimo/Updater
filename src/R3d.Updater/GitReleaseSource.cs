@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace R3d.Updater;
 
-/// <summary>Where releases come from. Two implementations: the GitHub REST API (needs a token for private repos) and git over SSH.</summary>
+/// <summary>Where releases come from. Two implementations: a host's REST API (GitHub or Forgejo; needs a token for private repos) and git over SSH.</summary>
 internal interface IReleaseSource
 {
     Task<GitHubRelease?> GetLatestAsync(bool includePrereleases, CancellationToken ct);
